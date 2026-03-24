@@ -1,0 +1,378 @@
+---
+title: "Prediction of Progression-Free Survival in Breast Cancer Patients"
+author: "William Donovan (wd2328), Hantang Qin (hq2229), Yongyan Liu (yl6107)"
+date: "2026-03-23"
+output:
+  pdf_document:
+    latex_engine: xelatex
+fontsize: 12pt
+linestretch: 1.5
+mainfont: "Times New Roman"
+geometry: margin=1in
+header-includes:
+  - \usepackage{float}
+  - \floatplacement{figure}{H}
+  - \floatplacement{table}{H}
+  - \usepackage{array}
+  - \usepackage{longtable}
+  - \usepackage{booktabs}
+---
+
+# Introduction
+
+Progression-free survival (PFS) is a key clinical endpoint in breast cancer research, defined as the time from diagnosis to disease progression or death. In this report, we build a prediction model for log-transformed PFS using data from 2,000 breast cancer patients diagnosed between 1990 and 1995 (Part I), and evaluate whether this model generalizes to a separate cohort of 2,000 patients diagnosed between 2000 and 2005 (Part II). We consider elastic net, partial least squares (PLS), multivariate adaptive regression splines (MARS), and generalized additive models (GAM) as candidate approaches.
+
+# Part I: Prediction Model for PFS (1990--1995 Cohort)
+
+## Data Overview
+
+The dataset (datA) contains 2,000 patients with complete follow-up and no missing values. The response variable is log-transformed PFS (months). There are 15 predictors: five continuous (age, BMI, tumor size, number of positive lymph nodes, Ki-67 index) and ten categorical (menopausal status, race, tumor grade, ER/PR/HER2 status, clinical stage, surgery type, chemotherapy, and hormonal therapy). Table 1 summarizes the sample characteristics. Exploratory analysis revealed that log(PFS) is approximately normally distributed (Figure 1). Among continuous predictors, tumor size and lymph node count show negative associations with log(PFS), while correlations among predictors are generally low (Figures 2--3). Boxplots indicate that ER-positive status, lower tumor grade, and earlier clinical stage are associated with longer PFS (Figure 4).
+
+## Model Training
+
+We trained four candidate models using 10-fold cross-validation (CV). The same pre-specified CV fold indices (seed 8106) were shared across all models to ensure a fair comparison. Categorical variables were converted to factors and expanded into dummy-coded indicators for methods requiring matrix input.
+
+**Elastic net** was tuned over a grid of $\alpha \in \{0, 0.1, \ldots, 1\}$ and 100 values of $\lambda$ on a log scale from $e^{-6}$ to $e^{2}$. The optimal model selected $\alpha = 1$ (i.e., Lasso) with $\lambda = 0.0135$, retaining 11 non-zero coefficients. **PLS** was tuned over 1--15 components with centered and scaled predictors; the best model used 10 components. **MARS** was tuned over interaction degree $\in \{1, 2, 3\}$ and the number of retained terms $\in \{2, \ldots, 18\}$; the best model selected degree 1 (additive) with 10 terms. **GAM** was fitted with smoothing splines on continuous predictors and linear terms for categorical variables, using manual 10-fold CV with the same fold indices.
+
+## Results
+
+Cross-validated performance was similar across all four models (Table 2, Figure 5). GAM achieved the lowest CV RMSE (0.699) and highest $R^2$ (0.207), though differences were small. The modest $R^2$ indicates that the available predictors explain a limited proportion of PFS variability, which is common in clinical prediction settings with heterogeneous patient populations.
+
+The Lasso coefficients (Table 3) identify the most influential predictors: ER status (+0.225), HER2 status (--0.144), hormonal therapy (+0.120), tumor grade 3 (--0.103), lymph nodes (--0.060), and tumor size (--0.048).
+
+The MARS model (Table 4) confirms these findings with an interpretable piecewise-linear structure: log(PFS) increases by 0.079 for each unit decrease in lymph nodes below 6, decreases by 0.049 per cm of tumor size, and shows a BMI effect with a knot at 23.9 kg/m$^2$. ER-positive status increases log(PFS) by 0.260, while HER2-positive and poorly differentiated tumors decrease it by 0.186 and 0.170, respectively.
+
+Variable importance rankings from both models consistently place lymph nodes, ER status, tumor grade, HER2 status, and tumor size as the top predictors (Figure 6). Partial dependence plots (Figure 7) and GAM smooth functions (Figure 8) further illustrate these relationships. Residual diagnostics (Figure 9) show no major departures from model assumptions.
+
+In summary, the key predictors of PFS in this cohort are the number of positive lymph nodes, ER/HER2 receptor status, tumor grade, tumor size, and hormonal therapy receipt---consistent with established breast cancer prognostic factors.
+
+# Part II: Generalization to the 2000--2005 Cohort
+
+## Evaluating Model A on Data B
+
+We applied all four models trained on datA to datB. As shown in Table 5, RMSE increased from approximately 0.70 (CV on datA) to approximately 0.84 on datB, representing a relative increase of roughly 20\%. The $R^2$ dropped from approximately 0.20 to approximately 0.15. The observed-versus-predicted plot (Figure 10) reveals systematic underprediction for patients with longer PFS, and the residual distribution (Figure 11) is shifted positively (mean residual $> 0$), indicating that patients in the later cohort tend to have longer PFS than predicted by the 1990s model. These results demonstrate that the prediction model does not generalize well to the 2000--2005 cohort.
+
+## Understanding the Distributional Shift
+
+Comparing the two cohorts (Table 6, Figures 12--13), log(PFS) in cohort B has a higher mean, reflecting improvements in breast cancer treatment over the intervening decade. Treatment patterns also shifted---notably increased use of hormonal therapy---and the distributions of clinical stage and other treatment variables changed. These temporal shifts in both the outcome and predictor distributions explain the poor transportability.
+
+## New Model for the 2000--2005 Cohort
+
+We retrained all four models on datB using the same tuning grids and a new set of pre-specified 10-fold CV indices. The best performer was again GAM (CV RMSE = 0.669, $R^2$ = 0.181), followed closely by MARS (CV RMSE = 0.671, $R^2$ = 0.177; see Table 7 and Figure 14).
+
+Several important differences emerged in the new model compared to Model A:
+
+1. **Interaction effects**: The MARS model for cohort B selected degree 2 (interactions), contrasting the additive model for cohort A. It identified interactions between tumor size and lymph nodes, tumor size and Ki-67, and BMI with both ER status and hormonal therapy, suggesting that the prognostic landscape in the later cohort is more complex.
+
+2. **Hormonal therapy**: Its MARS coefficient increased from +0.137 to +0.425, and from +0.120 to +0.173 in elastic net (Table 8). This likely reflects the increasing efficacy and use of targeted hormonal therapies (e.g., aromatase inhibitors) in the 2000s.
+
+3. **HER2 status**: HER2 was a significant negative predictor in cohort A (Lasso: --0.144; MARS: --0.186) but its effect was attenuated in cohort B (Lasso: +0.029; absent from MARS). This aligns with the introduction of trastuzumab (Herceptin) around 2000, which dramatically improved outcomes for HER2-positive patients.
+
+4. **Variable importance shift**: In cohort A, lymph nodes was the most important predictor in MARS. In cohort B, tumor size and Ki-67 emerged as the top two, with hormonal therapy ranking third (Figure 15). This shift may reflect changes in treatment personalization and the growing role of molecular markers.
+
+5. **Broader predictor set**: The elastic net for cohort B retained 15 non-zero coefficients (vs. 11 in cohort A), newly including menopause, PR status, and clinical stage, suggesting a broader set of relevant predictors in the more recent cohort.
+
+In conclusion, the 1990--1995 model does not generalize well to the 2000--2005 cohort. The changes in predictor-outcome relationships---particularly the enhanced role of hormonal therapy, diminished prognostic impact of HER2, and emergence of interaction effects---reflect genuine shifts in breast cancer treatment and prognosis over this period. A cohort-specific model is necessary for accurate prediction in the later population.
+
+\newpage
+
+# Appendix: Figures and Tables
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE, warning = FALSE, message = FALSE,
+                      fig.pos = "H", out.extra = "")
+library(tidyverse); library(caret); library(glmnet); library(earth)
+library(mgcv); library(pls); library(pdp); library(vip)
+library(corrplot); library(knitr); library(gridExtra); library(kableExtra)
+
+load("datA.RData"); load("datB.RData")
+
+process_data <- function(df) {
+  df %>% select(-id) %>%
+    mutate(menopause=factor(menopause), race=factor(race), tumor_grade=factor(tumor_grade),
+           ER=factor(ER), PR=factor(PR), HER2=factor(HER2), stage=factor(stage),
+           surgery=factor(surgery), chemo=factor(chemo), hormonal_therapy=factor(hormonal_therapy))
+}
+A <- process_data(datA); B <- process_data(datB)
+x_A <- model.matrix(log_PFS ~ ., data = A)[,-1]; y_A <- A$log_PFS
+x_B <- model.matrix(log_PFS ~ ., data = B)[,-1]; y_B <- B$log_PFS
+cat_vars <- c("menopause","race","tumor_grade","ER","PR","HER2","stage","surgery","chemo","hormonal_therapy")
+
+set.seed(8106)
+cv_folds <- createFolds(y_A, k = 10, returnTrain = TRUE)
+ctrl <- trainControl(method = "cv", number = 10, index = cv_folds)
+enet_grid <- expand.grid(alpha = seq(0,1,length=11), lambda = exp(seq(2,-6,length=100)))
+mars_grid <- expand.grid(degree = 1:3, nprune = 2:18)
+
+set.seed(8106)
+enet_fit <- train(x_A, y_A, method="glmnet", tuneGrid=enet_grid, trControl=ctrl)
+pls_fit <- train(x_A, y_A, method="pls", tuneGrid=data.frame(ncomp=1:15), trControl=ctrl, preProcess=c("center","scale"))
+mars_fit <- train(x_A, y_A, method="earth", tuneGrid=mars_grid, trControl=ctrl)
+
+gam_formula <- log_PFS ~ s(age) + menopause + race + s(bmi) + s(tumor_size) +
+  tumor_grade + s(lymph_nodes) + ER + PR + HER2 + s(Ki67) + stage + surgery + chemo + hormonal_therapy
+
+gam_cv_results <- sapply(seq_along(cv_folds), function(i) {
+  idx <- cv_folds[[i]]
+  gam_mod <- gam(gam_formula, data = A[idx, ])
+  pred <- predict(gam_mod, newdata = A[-idx, ])
+  RMSE(pred, y_A[-idx])
+})
+gam_fit_full <- gam(gam_formula, data = A)
+
+resamp <- resamples(list(ElasticNet=enet_fit, PLS=pls_fit, MARS=mars_fit))
+rmse_caret <- resamp$values %>% select(ends_with("~RMSE")) %>% colMeans(na.rm=TRUE)
+names(rmse_caret) <- gsub("~RMSE","",names(rmse_caret))
+rmse_all <- c(rmse_caret, GAM=mean(gam_cv_results))
+r2_caret <- resamp$values %>% select(ends_with("~Rsquared")) %>% colMeans(na.rm=TRUE)
+names(r2_caret) <- gsub("~Rsquared","",names(r2_caret))
+gam_r2_results <- sapply(seq_along(cv_folds), function(i) {
+  idx <- cv_folds[[i]]
+  gam_mod <- gam(gam_formula, data = A[idx, ])
+  pred <- predict(gam_mod, newdata = A[-idx, ])
+  caret::R2(pred, y_A[-idx])
+})
+r2_all <- c(r2_caret, GAM=mean(gam_r2_results))
+
+# Models on datB
+set.seed(8106)
+cv_folds_B <- createFolds(y_B, k = 10, returnTrain = TRUE)
+ctrl_B <- trainControl(method = "cv", number = 10, index = cv_folds_B)
+
+set.seed(8106)
+enet_fit_B <- train(x_B, y_B, method="glmnet", tuneGrid=enet_grid, trControl=ctrl_B)
+pls_fit_B <- train(x_B, y_B, method="pls", tuneGrid=data.frame(ncomp=1:15), trControl=ctrl_B, preProcess=c("center","scale"))
+mars_fit_B <- train(x_B, y_B, method="earth", tuneGrid=mars_grid, trControl=ctrl_B)
+
+gam_cv_B <- sapply(seq_along(cv_folds_B), function(i) {
+  idx <- cv_folds_B[[i]]
+  gam_mod <- gam(gam_formula, data = B[idx, ])
+  pred <- predict(gam_mod, newdata = B[-idx, ])
+  RMSE(pred, y_B[-idx])
+})
+gam_fit_B_full <- gam(gam_formula, data = B)
+
+resamp_B <- resamples(list(ElasticNet=enet_fit_B, PLS=pls_fit_B, MARS=mars_fit_B))
+rmse_caret_B <- resamp_B$values %>% select(ends_with("~RMSE")) %>% colMeans(na.rm=TRUE)
+names(rmse_caret_B) <- gsub("~RMSE","",names(rmse_caret_B))
+rmse_all_B <- c(rmse_caret_B, GAM=mean(gam_cv_B))
+r2_caret_B <- resamp_B$values %>% select(ends_with("~Rsquared")) %>% colMeans(na.rm=TRUE)
+names(r2_caret_B) <- gsub("~Rsquared","",names(r2_caret_B))
+gam_r2_B <- sapply(seq_along(cv_folds_B), function(i) {
+  idx <- cv_folds_B[[i]]
+  gam_mod <- gam(gam_formula, data = B[idx, ])
+  pred <- predict(gam_mod, newdata = B[-idx, ])
+  caret::R2(pred, y_B[-idx])
+})
+r2_all_B <- c(r2_caret_B, GAM=mean(gam_r2_B))
+```
+
+## Tables
+
+```{r tab1}
+# Continuous variables
+cont_sum <- A %>% select(age, bmi, tumor_size, lymph_nodes, Ki67, log_PFS) %>%
+  pivot_longer(everything(), names_to="Variable", values_to="Value") %>%
+  group_by(Variable) %>%
+  summarise(Summary = paste0(round(mean(Value),2), " (", round(sd(Value),2), ")"))
+
+# Categorical variables
+cat_sum <- A %>% select(all_of(cat_vars)) %>%
+  pivot_longer(everything(), names_to="Variable", values_to="Level") %>%
+  count(Variable, Level) %>% group_by(Variable) %>%
+  mutate(Summary = paste0(Level, ": ", n, " (", round(100*n/sum(n),1), "%)")) %>%
+  summarise(Summary = paste(Summary, collapse = "; "))
+
+tab1 <- bind_rows(cont_sum, cat_sum) %>% select(Variable, Summary)
+kable(tab1, caption="Sample characteristics (datA, n = 2000). Continuous variables reported as Mean (SD); categorical variables as Level: n (\\%).",
+      format = "latex", booktabs = TRUE) %>%
+  kable_styling(latex_options = "hold_position", font_size = 9) %>%
+  column_spec(1, width = "3.5cm") %>%
+  column_spec(2, width = "12cm") %>%
+  pack_rows("Continuous", 1, nrow(cont_sum)) %>%
+  pack_rows("Categorical", nrow(cont_sum)+1, nrow(cont_sum)+nrow(cat_sum))
+```
+
+```{r tab2}
+kable(data.frame(Model=names(rmse_all), CV_RMSE=round(rmse_all,4), CV_R2=round(r2_all,4)),
+      row.names=FALSE, caption="Cross-validated performance of candidate models (datA).")
+```
+
+```{r tab3}
+coef_enet <- coef(enet_fit$finalModel, s=enet_fit$bestTune$lambda)
+coef_df <- data.frame(Variable=rownames(coef_enet), Coefficient=round(as.numeric(coef_enet),4)) %>%
+  filter(Coefficient!=0) %>% arrange(desc(abs(Coefficient)))
+kable(coef_df, row.names=FALSE, caption="Non-zero Lasso coefficients (datA).")
+```
+
+```{r tab4}
+mars_coef <- data.frame(Term=names(coef(mars_fit$finalModel)),
+                        Coefficient=round(as.numeric(coef(mars_fit$finalModel)),4))
+kable(mars_coef, row.names=FALSE, caption="MARS basis function coefficients (datA).")
+```
+
+```{r tab5}
+pred_B <- list(ElasticNet=predict(enet_fit, newdata=x_B),
+               PLS=predict(pls_fit, newdata=x_B),
+               MARS=predict(mars_fit, newdata=x_B),
+               GAM=predict(gam_fit_full, newdata=B))
+gen_df <- data.frame(
+  Model=names(rmse_all),
+  CV_RMSE_A=round(rmse_all,4),
+  RMSE_on_B=round(c(RMSE(pred_B$ElasticNet,y_B), RMSE(pred_B$PLS,y_B),
+                     RMSE(pred_B$MARS,y_B), RMSE(pred_B$GAM,y_B)),4),
+  R2_on_B=round(c(caret::R2(pred_B$ElasticNet,y_B), caret::R2(pred_B$PLS,y_B),
+                   caret::R2(pred_B$MARS,y_B), caret::R2(pred_B$GAM,y_B)),4)
+)
+gen_df$Pct_Increase <- paste0(round(100*(gen_df$RMSE_on_B-gen_df$CV_RMSE_A)/gen_df$CV_RMSE_A,1),"%")
+kable(gen_df, row.names=FALSE, caption="Generalization performance of Model A on datB.")
+```
+
+```{r tab6}
+comp_A <- A %>% select(age,bmi,tumor_size,lymph_nodes,Ki67,log_PFS) %>%
+  summarise(across(everything(), ~paste0(round(mean(.x),2)," (",round(sd(.x),2),")"))) %>%
+  pivot_longer(everything(), names_to="Variable", values_to="Cohort A (1990-1995)")
+comp_B <- B %>% select(age,bmi,tumor_size,lymph_nodes,Ki67,log_PFS) %>%
+  summarise(across(everything(), ~paste0(round(mean(.x),2)," (",round(sd(.x),2),")"))) %>%
+  pivot_longer(everything(), names_to="Variable", values_to="Cohort B (2000-2005)")
+kable(left_join(comp_A, comp_B, by="Variable"),
+      caption="Mean (SD) comparison of continuous variables between cohorts.")
+```
+
+```{r tab7}
+kable(data.frame(Model=names(rmse_all_B), CV_RMSE=round(rmse_all_B,4), CV_R2=round(r2_all_B,4)),
+      row.names=FALSE, caption="Cross-validated performance of models on datB.")
+```
+
+```{r tab8}
+coef_A_enet <- coef(enet_fit$finalModel, s=enet_fit$bestTune$lambda)
+coef_B_enet <- coef(enet_fit_B$finalModel, s=enet_fit_B$bestTune$lambda)
+coef_comp <- data.frame(Variable=rownames(coef_A_enet),
+                        Cohort_A=round(as.numeric(coef_A_enet),4),
+                        Cohort_B=round(as.numeric(coef_B_enet),4)) %>%
+  mutate(Change=round(Cohort_B-Cohort_A,4)) %>%
+  filter(Cohort_A!=0|Cohort_B!=0) %>% arrange(desc(abs(Change)))
+kable(coef_comp, row.names=FALSE, caption="Elastic net coefficient comparison between cohorts.")
+```
+
+\newpage
+
+## Figures
+
+```{r fig1, fig.cap="Distribution of log-transformed PFS (datA).", fig.width=5, fig.height=3}
+ggplot(A, aes(x=log_PFS)) +
+  geom_histogram(aes(y=after_stat(density)), bins=40, fill="steelblue", alpha=0.7) +
+  geom_density(linewidth=0.8) +
+  labs(x="Log-transformed PFS (months)", y="Density") + theme_bw()
+```
+
+```{r fig2, fig.cap="Scatter plots of continuous predictors vs. log\\_PFS.", fig.width=7, fig.height=5, out.width="100%"}
+theme1 <- trellis.par.get()
+theme1$plot.symbol$col <- rgb(.2,.4,.2,.5); theme1$plot.symbol$pch <- 16
+theme1$plot.line$col <- rgb(.8,.1,.1,1); theme1$plot.line$lwd <- 2
+theme1$strip.background$col <- rgb(.0,.2,.6,.2)
+trellis.par.set(theme1)
+featurePlot(x=A %>% select(age,bmi,tumor_size,lymph_nodes,Ki67),
+            y=A$log_PFS, plot="scatter", span=.5,
+            type=c("p","smooth"), layout=c(3,2))
+```
+
+```{r fig3, fig.cap="Correlation matrix of continuous variables.", fig.width=5, fig.height=4}
+cor_mat <- cor(A %>% select(age,bmi,tumor_size,lymph_nodes,Ki67,log_PFS))
+corrplot(cor_mat, method="circle", type="full", addCoef.col="black",
+         tl.col="black", number.cex=0.7)
+```
+
+```{r fig4, fig.cap="Boxplots of log\\_PFS by categorical predictors.", fig.width=7, fig.height=5, out.width="100%"}
+A %>% select(all_of(cat_vars), log_PFS) %>%
+  pivot_longer(-log_PFS, names_to="variable", values_to="level") %>%
+  ggplot(aes(x=factor(level), y=log_PFS)) +
+  geom_boxplot(fill="steelblue", alpha=0.5) +
+  facet_wrap(~variable, scales="free_x", nrow=2) +
+  labs(x="Level", y="Log PFS") + theme_bw()
+```
+
+```{r fig5, fig.cap="Cross-validated RMSE comparison (datA).", fig.width=6, fig.height=3.5}
+bwplot(resamp, metric="RMSE")
+```
+
+```{r fig6, fig.cap="Variable importance from MARS and Lasso (datA).", fig.width=7, fig.height=3.5, out.width="100%"}
+p1 <- vip(mars_fit, num_features=10) + theme_bw() + ggtitle("MARS")
+p2 <- vip(enet_fit, num_features=10) + theme_bw() + ggtitle("Lasso")
+grid.arrange(p1, p2, ncol=2)
+```
+
+```{r fig7, fig.cap="Partial dependence plots for top 6 predictors (MARS, datA).", fig.width=7, fig.height=5, out.width="100%"}
+top_vars <- vip(mars_fit, num_features=6)$data$Variable
+pdp_list <- lapply(top_vars, function(v) {
+  pd <- partial(mars_fit, pred.var=v, grid.resolution=50)
+  autoplot(pd) + theme_bw() + ylab("log_PFS")
+})
+grid.arrange(grobs=pdp_list, ncol=3)
+```
+
+```{r fig8, fig.cap="GAM smooth function estimates (datA).", fig.width=7, fig.height=5, out.width="100%"}
+par(mfrow=c(2,3))
+plot(gam_fit_full, shade=TRUE)
+par(mfrow=c(1,1))
+```
+
+```{r fig9, fig.cap="Residual diagnostics for MARS on training data.", fig.width=7, fig.height=3.5, out.width="100%"}
+pred_train <- as.vector(predict(mars_fit, newdata=x_A))
+resid_train <- y_A - pred_train
+p1 <- ggplot(data.frame(Predicted=pred_train, Residual=resid_train),
+             aes(x=Predicted, y=Residual)) +
+  geom_point(alpha=0.2, size=0.8) + geom_hline(yintercept=0, color="red") +
+  labs(x="Predicted", y="Residual", title="Residuals vs Fitted") + theme_bw()
+p2 <- ggplot(data.frame(Residual=resid_train), aes(sample=Residual)) +
+  stat_qq(alpha=0.2, size=0.8) + stat_qq_line(color="red") +
+  labs(title="Normal Q-Q Plot") + theme_bw()
+grid.arrange(p1, p2, ncol=2)
+```
+
+```{r fig10, fig.cap="Observed vs. predicted log\\_PFS on datB (MARS from cohort A).", fig.width=5, fig.height=4}
+pred_best_B <- as.vector(predict(mars_fit, newdata=x_B))
+ggplot(data.frame(Observed=y_B, Predicted=pred_best_B), aes(x=Observed, y=Predicted)) +
+  geom_point(alpha=0.2, size=0.8) +
+  geom_abline(slope=1, intercept=0, color="red", linewidth=0.8) +
+  labs(x="Observed log_PFS", y="Predicted log_PFS") + theme_bw()
+```
+
+```{r fig11, fig.cap="Residual distribution of Model A applied to datB.", fig.width=5, fig.height=3.5}
+resid_B <- y_B - pred_best_B
+ggplot(data.frame(Residual=resid_B), aes(x=Residual)) +
+  geom_histogram(aes(y=after_stat(density)), bins=40, fill="steelblue", alpha=0.7) +
+  geom_density(linewidth=0.8) +
+  geom_vline(xintercept=mean(resid_B), color="red", linetype="dashed") +
+  labs(x="Residual", y="Density",
+       subtitle=paste("Mean residual =", round(mean(resid_B),3))) + theme_bw()
+```
+
+```{r fig12, fig.cap="Distribution comparison of continuous variables between cohorts.", fig.width=7, fig.height=5, out.width="100%"}
+combined <- bind_rows(datA %>% mutate(Cohort="1990-1995"), datB %>% mutate(Cohort="2000-2005"))
+combined %>% select(log_PFS,tumor_size,lymph_nodes,Ki67,age,bmi,Cohort) %>%
+  pivot_longer(-Cohort, names_to="Variable", values_to="Value") %>%
+  ggplot(aes(x=Value, fill=Cohort)) + geom_density(alpha=0.4) +
+  facet_wrap(~Variable, scales="free", nrow=2) + theme_bw() + scale_fill_brewer(palette="Set1")
+```
+
+```{r fig13, fig.cap="Categorical variable distributions across cohorts.", fig.width=7, fig.height=5, out.width="100%"}
+combined %>% select(all_of(cat_vars), Cohort) %>%
+  pivot_longer(-Cohort, names_to="Variable", values_to="Level") %>%
+  count(Cohort, Variable, Level) %>% group_by(Cohort, Variable) %>%
+  mutate(Prop=n/sum(n)) %>%
+  ggplot(aes(x=factor(Level), y=Prop, fill=Cohort)) +
+  geom_col(position="dodge", alpha=0.7) +
+  facet_wrap(~Variable, scales="free", nrow=2) +
+  labs(x="Level", y="Proportion") + theme_bw() + scale_fill_brewer(palette="Set1")
+```
+
+```{r fig14, fig.cap="CV RMSE comparison for models trained on datB.", fig.width=6, fig.height=3.5}
+bwplot(resamp_B, metric="RMSE")
+```
+
+```{r fig15, fig.cap="Variable importance comparison (MARS) between cohorts.", fig.width=7, fig.height=3.5, out.width="100%"}
+p1 <- vip(mars_fit, num_features=10) + theme_bw() + ggtitle("Cohort A (1990-1995)")
+p2 <- vip(mars_fit_B, num_features=10) + theme_bw() + ggtitle("Cohort B (2000-2005)")
+grid.arrange(p1, p2, ncol=2)
+```

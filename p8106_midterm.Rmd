@@ -1,0 +1,605 @@
+---
+title: "P8106 Data Science II - Midterm Project"
+author: "William Donovan (wd2328), Hantang Qin (hq2229), Yongyan Liu (yl6107)"
+date: "2026-03-23"
+output:
+  html_document:
+    toc: true
+    toc_float: true
+  pdf_document:
+    latex_engine: xelatex
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, warning = FALSE, message = FALSE)
+library(tidyverse)
+library(caret)
+library(glmnet)
+library(earth)
+library(mgcv)
+library(pls)
+library(splines)
+library(pdp)
+library(vip)
+library(corrplot)
+library(knitr)
+library(gridExtra)
+```
+
+# Data Preparation
+
+```{r data-load}
+load("datA.RData")
+load("datB.RData")
+
+# Remove ID, convert categorical variables to factors
+process_data <- function(df) {
+  df %>%
+    select(-id) %>%
+    mutate(
+      menopause = factor(menopause),
+      race = factor(race),
+      tumor_grade = factor(tumor_grade),
+      ER = factor(ER),
+      PR = factor(PR),
+      HER2 = factor(HER2),
+      stage = factor(stage),
+      surgery = factor(surgery),
+      chemo = factor(chemo),
+      hormonal_therapy = factor(hormonal_therapy)
+    )
+}
+
+A <- process_data(datA)
+B <- process_data(datB)
+
+# Design matrix for methods requiring matrix input
+x_A <- model.matrix(log_PFS ~ ., data = A)[, -1]
+y_A <- A$log_PFS
+x_B <- model.matrix(log_PFS ~ ., data = B)[, -1]
+y_B <- B$log_PFS
+```
+
+# Part I: Prediction Model for PFS (1990–1995 Cohort)
+
+## Exploratory Data Analysis
+
+```{r eda-feature, fig.cap="Figure 1: Scatter plots of continuous predictors vs. log_PFS.", fig.width=10, fig.height=8}
+theme1 <- trellis.par.get()
+theme1$plot.symbol$col <- rgb(.2, .4, .2, .5)
+theme1$plot.symbol$pch <- 16
+theme1$plot.line$col <- rgb(.8, .1, .1, 1)
+theme1$plot.line$lwd <- 2
+theme1$strip.background$col <- rgb(.0, .2, .6, .2)
+trellis.par.set(theme1)
+
+featurePlot(x = A %>% select(age, bmi, tumor_size, lymph_nodes, Ki67),
+            y = A$log_PFS,
+            plot = "scatter",
+            span = .5,
+            type = c("p", "smooth"),
+            layout = c(3, 2))
+```
+
+```{r eda-boxplot, fig.cap="Figure 2: Boxplots of log_PFS by categorical predictors.", fig.width=12, fig.height=8}
+cat_vars <- c("menopause", "race", "tumor_grade", "ER", "PR", "HER2",
+              "stage", "surgery", "chemo", "hormonal_therapy")
+
+A %>%
+  select(all_of(cat_vars), log_PFS) %>%
+  pivot_longer(-log_PFS, names_to = "variable", values_to = "level") %>%
+  ggplot(aes(x = factor(level), y = log_PFS)) +
+  geom_boxplot(fill = "steelblue", alpha = 0.5) +
+  facet_wrap(~ variable, scales = "free_x", nrow = 2) +
+  labs(x = "Level", y = "Log PFS") +
+  theme_bw()
+```
+
+```{r eda-corr, fig.cap="Figure 3: Correlation matrix of continuous variables.", fig.width=6, fig.height=5}
+cor_mat <- cor(A %>% select(age, bmi, tumor_size, lymph_nodes, Ki67, log_PFS))
+corrplot(cor_mat, method = "circle", type = "full", addCoef.col = "black",
+         tl.col = "black", number.cex = 0.7)
+```
+
+```{r eda-response, fig.cap="Figure 4: Distribution of log-transformed PFS.", fig.width=6, fig.height=4}
+ggplot(A, aes(x = log_PFS)) +
+  geom_histogram(aes(y = after_stat(density)), bins = 40, fill = "steelblue", alpha = 0.7) +
+  geom_density(linewidth = 0.8) +
+  labs(x = "Log-transformed PFS (months)", y = "Density") +
+  theme_bw()
+```
+
+```{r summary-table-cont}
+# Table 1a: Continuous variable summary
+cont_summary <- A %>%
+  select(age, bmi, tumor_size, lymph_nodes, Ki67, log_PFS) %>%
+  pivot_longer(everything(), names_to = "Variable", values_to = "Value") %>%
+  group_by(Variable) %>%
+  summarise(Mean = round(mean(Value), 2),
+            SD = round(sd(Value), 2),
+            Median = round(median(Value), 2),
+            Min = round(min(Value), 2),
+            Max = round(max(Value), 2))
+kable(cont_summary, caption = "Table 1a: Summary of continuous variables (datA).")
+```
+
+```{r summary-table-cat}
+# Table 1b: Categorical variable summary
+cat_summary <- A %>%
+  select(all_of(cat_vars)) %>%
+  pivot_longer(everything(), names_to = "Variable", values_to = "Level") %>%
+  count(Variable, Level) %>%
+  group_by(Variable) %>%
+  mutate(Percentage = round(100 * n / sum(n), 1),
+         Summary = paste0(n, " (", Percentage, "%)")) %>%
+  select(Variable, Level, Summary)
+kable(cat_summary, caption = "Table 1b: Summary of categorical variables (datA).")
+```
+
+## Model Training
+
+We use 10-fold cross-validation to train and compare four candidate models: elastic net, partial least squares (PLS), multivariate adaptive regression splines (MARS), and generalized additive model (GAM). To ensure a fair comparison, the same CV fold indices are used across all models.
+
+```{r cv-setup}
+set.seed(8106)
+cv_folds <- createFolds(y_A, k = 10, returnTrain = TRUE)
+ctrl <- trainControl(method = "cv", number = 10, index = cv_folds)
+```
+
+### Elastic Net
+
+```{r enet}
+set.seed(8106)
+enet_grid <- expand.grid(
+  alpha = seq(0, 1, length = 11),
+  lambda = exp(seq(2, -6, length = 100))
+)
+
+enet_fit <- train(x_A, y_A,
+                  method = "glmnet",
+                  tuneGrid = enet_grid,
+                  trControl = ctrl)
+
+enet_fit$bestTune
+```
+
+```{r enet-plot, fig.cap="Figure 5: Elastic net CV RMSE.", fig.width=8, fig.height=5}
+myCol <- rainbow(25)
+myPar <- list(superpose.symbol = list(col = myCol),
+              superpose.line = list(col = myCol))
+plot(enet_fit, par.settings = myPar, xTrans = log)
+```
+
+### PLS
+
+```{r pls}
+set.seed(8106)
+pls_fit <- train(x_A, y_A,
+                 method = "pls",
+                 tuneGrid = data.frame(ncomp = 1:15),
+                 trControl = ctrl,
+                 preProcess = c("center", "scale"))
+pls_fit$bestTune
+```
+
+```{r pls-plot, fig.cap="Figure 6: PLS CV RMSE by number of components.", fig.width=6, fig.height=4}
+plot(pls_fit)
+```
+
+### MARS
+
+```{r mars}
+set.seed(8106)
+mars_grid <- expand.grid(degree = 1:3, nprune = 2:18)
+
+mars_fit <- train(x_A, y_A,
+                  method = "earth",
+                  tuneGrid = mars_grid,
+                  trControl = ctrl)
+
+mars_fit$bestTune
+```
+
+```{r mars-plot, fig.cap="Figure 7: MARS CV RMSE across tuning parameters.", fig.width=7, fig.height=5}
+plot(mars_fit)
+```
+
+### GAM
+
+We fit GAM using `mgcv::gam()` directly with smooth terms applied only to continuous predictors, preserving categorical variables as linear terms.
+
+```{r gam}
+set.seed(8106)
+
+# Fit GAM with proper formula: s() for continuous, linear for factors
+gam_formula <- log_PFS ~ s(age) + menopause + race + s(bmi) +
+  s(tumor_size) + tumor_grade + s(lymph_nodes) + ER + PR + HER2 +
+  s(Ki67) + stage + surgery + chemo + hormonal_therapy
+
+# Manual 10-fold CV for GAM to use the same folds
+gam_cv_results <- sapply(seq_along(cv_folds), function(i) {
+  train_idx <- cv_folds[[i]]
+  gam_mod <- gam(gam_formula, data = A[train_idx, ])
+  pred <- predict(gam_mod, newdata = A[-train_idx, ])
+  RMSE(pred, y_A[-train_idx])
+})
+
+cat("GAM 10-fold CV RMSE:", round(mean(gam_cv_results), 4), "\n")
+
+# Fit final GAM on full data
+gam_fit_full <- gam(gam_formula, data = A)
+```
+
+### Model Comparison
+
+```{r resamp, fig.cap="Figure 8: Cross-validated RMSE comparison of candidate models.", fig.width=7, fig.height=4}
+resamp <- resamples(list(
+  ElasticNet = enet_fit,
+  PLS = pls_fit,
+  MARS = mars_fit
+))
+
+summary(resamp)
+
+# Add GAM results manually for display
+rmse_caret <- resamp$values %>%
+  select(ends_with("~RMSE")) %>%
+  colMeans(na.rm = TRUE)
+names(rmse_caret) <- gsub("~RMSE", "", names(rmse_caret))
+rmse_all <- c(rmse_caret, GAM = mean(gam_cv_results))
+
+r2_caret <- resamp$values %>%
+  select(ends_with("~Rsquared")) %>%
+  colMeans(na.rm = TRUE)
+names(r2_caret) <- gsub("~Rsquared", "", names(r2_caret))
+
+# GAM R2 via CV
+gam_r2_results <- sapply(seq_along(cv_folds), function(i) {
+  train_idx <- cv_folds[[i]]
+  gam_mod <- gam(gam_formula, data = A[train_idx, ])
+  pred <- predict(gam_mod, newdata = A[-train_idx, ])
+  caret::R2(pred, y_A[-train_idx])
+})
+r2_all <- c(r2_caret, GAM = mean(gam_r2_results))
+
+comparison_table <- data.frame(
+  Model = names(rmse_all),
+  CV_RMSE = round(rmse_all, 4),
+  CV_R2 = round(r2_all, 4)
+)
+kable(comparison_table, row.names = FALSE,
+      caption = "Table 2: Cross-validated performance of candidate models (datA).")
+
+bwplot(resamp, metric = "RMSE")
+```
+
+```{r best-model}
+best_name <- names(which.min(rmse_all))
+cat("Best model by CV RMSE:", best_name, "=", round(min(rmse_all), 4), "\n")
+```
+
+## Model Interpretation
+
+### Elastic Net Coefficients
+
+```{r enet-coef}
+coef_enet <- coef(enet_fit$finalModel, s = enet_fit$bestTune$lambda)
+coef_df <- data.frame(
+  Variable = rownames(coef_enet),
+  Coefficient = round(as.numeric(coef_enet), 4)
+) %>% filter(Coefficient != 0) %>% arrange(desc(abs(Coefficient)))
+
+kable(coef_df, caption = "Table 3: Non-zero elastic net coefficients.",
+      row.names = FALSE)
+```
+
+### MARS Model Summary
+
+```{r mars-summary}
+summary(mars_fit$finalModel)
+```
+
+```{r mars-coef}
+mars_coef <- data.frame(
+  Term = names(coef(mars_fit$finalModel)),
+  Coefficient = round(as.numeric(coef(mars_fit$finalModel)), 4)
+)
+kable(mars_coef, caption = "Table 4: MARS basis function coefficients.",
+      row.names = FALSE)
+```
+
+### GAM Summary
+
+```{r gam-summary}
+summary(gam_fit_full)
+```
+
+```{r gam-plot, fig.cap="Figure 9: GAM smooth function estimates.", fig.width=10, fig.height=8}
+par(mfrow = c(2, 3))
+plot(gam_fit_full, shade = TRUE)
+par(mfrow = c(1, 1))
+```
+
+### Variable Importance
+
+```{r vip-all, fig.cap="Figure 10: Variable importance from MARS and elastic net.", fig.width=10, fig.height=5}
+p1 <- vip(mars_fit, num_features = 10) + theme_bw() + ggtitle("MARS")
+p2 <- vip(enet_fit, num_features = 10) + theme_bw() + ggtitle("Elastic Net")
+grid.arrange(p1, p2, ncol = 2)
+```
+
+### Partial Dependence Plots
+
+```{r pdp-mars, fig.cap="Figure 11: Partial dependence plots for top predictors (MARS).", fig.width=10, fig.height=8}
+top_vars <- vip(mars_fit, num_features = 6)$data$Variable
+
+pdp_list <- lapply(top_vars, function(v) {
+  pd <- partial(mars_fit, pred.var = v, grid.resolution = 50)
+  autoplot(pd) + theme_bw() + ylab("log_PFS")
+})
+grid.arrange(grobs = pdp_list, ncol = 3)
+```
+
+### Residual Diagnostics (Training Set)
+
+```{r resid-train, fig.cap="Figure 12: Residual diagnostics for MARS on training data.", fig.width=8, fig.height=4}
+pred_train <- as.vector(predict(mars_fit, newdata = x_A))
+resid_train <- y_A - pred_train
+
+p1 <- ggplot(data.frame(Predicted = pred_train, Residual = resid_train),
+             aes(x = Predicted, y = Residual)) +
+  geom_point(alpha = 0.2, size = 0.8) +
+  geom_hline(yintercept = 0, color = "red") +
+  labs(x = "Predicted", y = "Residual", title = "Residuals vs Fitted") +
+  theme_bw()
+
+p2 <- ggplot(data.frame(Residual = resid_train), aes(sample = Residual)) +
+  stat_qq(alpha = 0.2, size = 0.8) +
+  stat_qq_line(color = "red") +
+  labs(title = "Normal Q-Q Plot") +
+  theme_bw()
+
+grid.arrange(p1, p2, ncol = 2)
+```
+
+---
+
+# Part II: Generalization to the 2000–2005 Cohort
+
+## Apply Model A to Data B
+
+```{r gen-eval}
+pred_enet_B <- predict(enet_fit, newdata = x_B)
+pred_pls_B  <- predict(pls_fit,  newdata = x_B)
+pred_mars_B <- predict(mars_fit, newdata = x_B)
+pred_gam_B  <- predict(gam_fit_full, newdata = B)
+
+gen_table <- data.frame(
+  Model = c("ElasticNet", "PLS", "MARS", "GAM"),
+  CV_RMSE_A = round(rmse_all, 4),
+  RMSE_on_B = round(c(RMSE(pred_enet_B, y_B),
+                       RMSE(pred_pls_B, y_B),
+                       RMSE(pred_mars_B, y_B),
+                       RMSE(pred_gam_B, y_B)), 4),
+  R2_on_B = round(c(caret::R2(pred_enet_B, y_B),
+                     caret::R2(pred_pls_B, y_B),
+                     caret::R2(pred_mars_B, y_B),
+                     caret::R2(pred_gam_B, y_B)), 4)
+)
+gen_table$RMSE_increase <- paste0(round(100 * (gen_table$RMSE_on_B - gen_table$CV_RMSE_A) /
+                                          gen_table$CV_RMSE_A, 1), "%")
+kable(gen_table, caption = "Table 5: Generalization of Model A to datB.", row.names = FALSE)
+```
+
+```{r gen-plot, fig.cap="Figure 13: Observed vs. predicted log_PFS on datB (MARS from cohort A).", fig.width=6, fig.height=5}
+pred_best_B <- as.vector(predict(mars_fit, newdata = x_B))
+
+ggplot(data.frame(Observed = y_B, Predicted = pred_best_B),
+       aes(x = Observed, y = Predicted)) +
+  geom_point(alpha = 0.2, size = 0.8) +
+  geom_abline(slope = 1, intercept = 0, color = "red", linewidth = 0.8) +
+  labs(x = "Observed log_PFS", y = "Predicted log_PFS") +
+  theme_bw()
+```
+
+```{r resid-B, fig.cap="Figure 14: Residual distribution of Model A on datB.", fig.width=6, fig.height=4}
+resid_B <- y_B - pred_best_B
+ggplot(data.frame(Residual = resid_B), aes(x = Residual)) +
+  geom_histogram(aes(y = after_stat(density)), bins = 40, fill = "steelblue", alpha = 0.7) +
+  geom_density(linewidth = 0.8) +
+  geom_vline(xintercept = mean(resid_B), color = "red", linetype = "dashed") +
+  labs(x = "Residual", y = "Density",
+       subtitle = paste("Mean residual =", round(mean(resid_B), 3))) +
+  theme_bw()
+```
+
+## Distribution Comparison Between Cohorts
+
+```{r dist-compare, fig.cap="Figure 15: Distribution comparison of continuous variables between cohorts.", fig.width=10, fig.height=8}
+combined <- bind_rows(
+  datA %>% mutate(Cohort = "1990-1995"),
+  datB %>% mutate(Cohort = "2000-2005")
+)
+
+combined %>%
+  select(log_PFS, tumor_size, lymph_nodes, Ki67, age, bmi, Cohort) %>%
+  pivot_longer(-Cohort, names_to = "Variable", values_to = "Value") %>%
+  ggplot(aes(x = Value, fill = Cohort)) +
+  geom_density(alpha = 0.4) +
+  facet_wrap(~ Variable, scales = "free", nrow = 2) +
+  theme_bw() +
+  scale_fill_brewer(palette = "Set1")
+```
+
+```{r cat-compare, fig.cap="Figure 16: Categorical variable distributions across cohorts.", fig.width=10, fig.height=6}
+combined %>%
+  select(all_of(cat_vars), Cohort) %>%
+  pivot_longer(-Cohort, names_to = "Variable", values_to = "Level") %>%
+  count(Cohort, Variable, Level) %>%
+  group_by(Cohort, Variable) %>%
+  mutate(Prop = n / sum(n)) %>%
+  ggplot(aes(x = factor(Level), y = Prop, fill = Cohort)) +
+  geom_col(position = "dodge", alpha = 0.7) +
+  facet_wrap(~ Variable, scales = "free", nrow = 2) +
+  labs(x = "Level", y = "Proportion") +
+  theme_bw() +
+  scale_fill_brewer(palette = "Set1")
+```
+
+```{r cohort-summary}
+comp_A <- A %>%
+  select(age, bmi, tumor_size, lymph_nodes, Ki67, log_PFS) %>%
+  summarise(across(everything(), ~ paste0(round(mean(.x), 2), " (", round(sd(.x), 2), ")"))) %>%
+  pivot_longer(everything(), names_to = "Variable", values_to = "Cohort A (1990-1995)")
+
+comp_B <- B %>%
+  select(age, bmi, tumor_size, lymph_nodes, Ki67, log_PFS) %>%
+  summarise(across(everything(), ~ paste0(round(mean(.x), 2), " (", round(sd(.x), 2), ")"))) %>%
+  pivot_longer(everything(), names_to = "Variable", values_to = "Cohort B (2000-2005)")
+
+kable(left_join(comp_A, comp_B, by = "Variable"),
+      caption = "Table 6: Mean (SD) comparison of continuous variables between cohorts.")
+```
+
+## Build New Model for datB
+
+```{r model-B-setup}
+set.seed(8106)
+cv_folds_B <- createFolds(y_B, k = 10, returnTrain = TRUE)
+ctrl_B <- trainControl(method = "cv", number = 10, index = cv_folds_B)
+```
+
+```{r model-B}
+set.seed(8106)
+enet_fit_B <- train(x_B, y_B, method = "glmnet",
+                    tuneGrid = enet_grid, trControl = ctrl_B)
+
+pls_fit_B <- train(x_B, y_B, method = "pls",
+                   tuneGrid = data.frame(ncomp = 1:15),
+                   trControl = ctrl_B, preProcess = c("center", "scale"))
+
+mars_fit_B <- train(x_B, y_B, method = "earth",
+                    tuneGrid = mars_grid, trControl = ctrl_B)
+
+# GAM with proper formula on datB
+gam_cv_B <- sapply(seq_along(cv_folds_B), function(i) {
+  train_idx <- cv_folds_B[[i]]
+  gam_mod <- gam(gam_formula, data = B[train_idx, ])
+  pred <- predict(gam_mod, newdata = B[-train_idx, ])
+  RMSE(pred, y_B[-train_idx])
+})
+gam_fit_B_full <- gam(gam_formula, data = B)
+
+gam_r2_B <- sapply(seq_along(cv_folds_B), function(i) {
+  train_idx <- cv_folds_B[[i]]
+  gam_mod <- gam(gam_formula, data = B[train_idx, ])
+  pred <- predict(gam_mod, newdata = B[-train_idx, ])
+  caret::R2(pred, y_B[-train_idx])
+})
+```
+
+```{r resamp-B, fig.cap="Figure 17: CV RMSE comparison for models trained on datB.", fig.width=7, fig.height=4}
+resamp_B <- resamples(list(
+  ElasticNet = enet_fit_B,
+  PLS = pls_fit_B,
+  MARS = mars_fit_B
+))
+
+rmse_caret_B <- resamp_B$values %>%
+  select(ends_with("~RMSE")) %>%
+  colMeans(na.rm = TRUE)
+names(rmse_caret_B) <- gsub("~RMSE", "", names(rmse_caret_B))
+rmse_all_B <- c(rmse_caret_B, GAM = mean(gam_cv_B))
+
+r2_caret_B <- resamp_B$values %>%
+  select(ends_with("~Rsquared")) %>%
+  colMeans(na.rm = TRUE)
+names(r2_caret_B) <- gsub("~Rsquared", "", names(r2_caret_B))
+r2_all_B <- c(r2_caret_B, GAM = mean(gam_r2_B))
+
+comp_B_table <- data.frame(
+  Model = names(rmse_all_B),
+  CV_RMSE = round(rmse_all_B, 4),
+  CV_R2 = round(r2_all_B, 4)
+)
+kable(comp_B_table, row.names = FALSE,
+      caption = "Table 7: Cross-validated performance of models on datB.")
+
+bwplot(resamp_B, metric = "RMSE")
+```
+
+### Variable Importance Comparison
+
+```{r vip-compare, fig.cap="Figure 18: Variable importance comparison (MARS) between cohorts.", fig.width=10, fig.height=5}
+p1 <- vip(mars_fit, num_features = 10) + theme_bw() + ggtitle("Cohort A (1990-1995)")
+p2 <- vip(mars_fit_B, num_features = 10) + theme_bw() + ggtitle("Cohort B (2000-2005)")
+grid.arrange(p1, p2, ncol = 2)
+```
+
+### Coefficient Comparison (Elastic Net)
+
+```{r coef-compare}
+coef_A <- coef(enet_fit$finalModel, s = enet_fit$bestTune$lambda)
+coef_Bnew <- coef(enet_fit_B$finalModel, s = enet_fit_B$bestTune$lambda)
+
+coef_comp <- data.frame(
+  Variable = rownames(coef_A),
+  Cohort_A = round(as.numeric(coef_A), 4),
+  Cohort_B = round(as.numeric(coef_Bnew), 4)
+) %>%
+  mutate(Change = round(Cohort_B - Cohort_A, 4)) %>%
+  filter(Cohort_A != 0 | Cohort_B != 0) %>%
+  arrange(desc(abs(Change)))
+
+kable(coef_comp, caption = "Table 8: Elastic net coefficient comparison between cohorts.",
+      row.names = FALSE)
+```
+
+### MARS Comparison
+
+```{r mars-B-summary}
+summary(mars_fit_B$finalModel)
+
+mars_coef_B <- data.frame(
+  Term = names(coef(mars_fit_B$finalModel)),
+  Coefficient = round(as.numeric(coef(mars_fit_B$finalModel)), 4)
+)
+kable(mars_coef_B, caption = "Table 9: MARS basis function coefficients (datB).",
+      row.names = FALSE)
+```
+
+### PDP Comparison
+
+```{r pdp-compare, fig.cap="Figure 19: PDP comparison for top predictors between cohorts.", fig.width=10, fig.height=4}
+top3 <- vip(mars_fit, num_features = 3)$data$Variable
+
+pdp_compare <- lapply(top3, function(v) {
+  pd_a <- partial(mars_fit, pred.var = v, grid.resolution = 50) %>%
+    mutate(Cohort = "A (1990-1995)")
+  pd_b <- partial(mars_fit_B, pred.var = v, grid.resolution = 50) %>%
+    mutate(Cohort = "B (2000-2005)")
+  pd_both <- bind_rows(pd_a, pd_b)
+  ggplot(pd_both, aes(x = .data[[v]], y = yhat, color = Cohort)) +
+    geom_line(linewidth = 1) +
+    labs(y = "log_PFS", title = v) +
+    theme_bw() + scale_color_brewer(palette = "Set1")
+})
+grid.arrange(grobs = pdp_compare, ncol = 3)
+```
+
+## Summary
+
+```{r final-summary}
+best_B_name <- names(which.min(rmse_all_B))
+
+final_table <- data.frame(
+  Metric = c("Best Model", "CV RMSE", "CV R-squared"),
+  Cohort_A = c(best_name,
+               round(min(rmse_all), 4),
+               round(r2_all[best_name], 4)),
+  Cohort_B = c(best_B_name,
+               round(min(rmse_all_B), 4),
+               round(r2_all_B[best_B_name], 4))
+)
+kable(final_table, caption = "Table 10: Best model summary for each cohort.", row.names = FALSE)
+```
