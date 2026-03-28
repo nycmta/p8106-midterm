@@ -146,6 +146,7 @@ y_B_test <- B_test$log_PFS
 
 cat_vars <- c("menopause","race","tumor_grade","ER","PR","HER2","stage","surgery","chemo","hormonal_therapy")
 
+# Models on datA
 set.seed(8106)
 cv_folds <- createFolds(y_A_train, k = 10, returnTrain = TRUE)
 ctrl <- trainControl(method = "cv", number = 10, index = cv_folds)
@@ -182,6 +183,12 @@ gam_r2_results <- sapply(seq_along(cv_folds), function(i) {
 })
 r2_all <- c(r2_caret, GAM=mean(gam_r2_results))
 
+# Test set evaluation (datA)
+pred_enet_test <- predict(enet_fit, newdata = x_A_test)
+pred_pls_test <- predict(pls_fit, newdata = x_A_test)
+pred_mars_test <- as.vector(predict(mars_fit, newdata = x_A_test))
+pred_gam_test <- predict(gam_fit_full, newdata = A_test)
+
 # Models on datB
 set.seed(8106)
 cv_folds_B <- createFolds(y_B_train, k = 10, returnTrain = TRUE)
@@ -213,6 +220,12 @@ gam_r2_B <- sapply(seq_along(cv_folds_B), function(i) {
   caret::R2(pred, y_B_train[-idx])
 })
 r2_all_B <- c(r2_caret_B, GAM=mean(gam_r2_B))
+
+# Test set evaluation (datB)
+pred_enet_B_test <- predict(enet_fit_B, newdata = x_B_test)
+pred_pls_B_test <- predict(pls_fit_B, newdata = x_B_test)
+pred_mars_B_test <- as.vector(predict(mars_fit_B, newdata = x_B_test))
+pred_gam_B_test <- predict(gam_fit_B_full, newdata = B_test)
 ```
 
 ## Tables
