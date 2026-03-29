@@ -11,7 +11,8 @@ output:
 ---
 
 ```{r setup, include=FALSE}
-knitr::opts_chunk$set(echo = TRUE, warning = FALSE, message = FALSE)
+knitr::opts_chunk$set(echo = TRUE, warning = FALSE, message = FALSE,
+                      fig.path = "figures/", dev = "png", dpi = 300)
 library(tidyverse)
 library(caret)
 library(glmnet)
@@ -24,9 +25,6 @@ library(vip)
 library(corrplot)
 library(knitr)
 library(gridExtra)
-
-fig_dir <- "figures"
-dir.create(fig_dir, showWarnings = FALSE)
 ```
 
 # Data Preparation
@@ -79,13 +77,11 @@ y_B <- B$log_PFS
 ## Exploratory Data Analysis
 
 ```{r eda-response, fig.cap="Distribution of log-transformed PFS (datA).", fig.width=5, fig.height=3}
-p <- ggplot(A, aes(x = log_PFS)) +
+ggplot(A, aes(x = log_PFS)) +
   geom_histogram(aes(y = after_stat(density)), bins = 40, fill = "steelblue", alpha = 0.7) +
   geom_density(linewidth = 0.8) +
   labs(x = "Log-transformed PFS (months)", y = "Density") +
   theme_bw()
-print(p)
-ggsave(file.path(fig_dir, "fig1-response.png"), p, width = 5, height = 3, dpi = 300)
 ```
 
 ```{r eda-feature, fig.cap="Scatter plots of continuous predictors vs. log\\_PFS.", fig.width=7, fig.height=5}
@@ -97,34 +93,25 @@ theme1$plot.line$lwd <- 2
 theme1$strip.background$col <- rgb(.0, .2, .6, .2)
 trellis.par.set(theme1)
 
-p <- featurePlot(x = A %>% select(age, bmi, tumor_size, lymph_nodes, Ki67),
-                 y = A$log_PFS,
-                 plot = "scatter",
-                 span = .5,
-                 type = c("p", "smooth"),
-                 layout = c(3, 2))
-print(p)
-png(file.path(fig_dir, "fig2-feature.png"), width = 7, height = 5, units = "in", res = 300)
-print(p)
-dev.off()
+featurePlot(x = A %>% select(age, bmi, tumor_size, lymph_nodes, Ki67),
+            y = A$log_PFS,
+            plot = "scatter",
+            span = .5,
+            type = c("p", "smooth"),
+            layout = c(3, 2))
 ```
 
 ```{r eda-corr, fig.cap="Correlation matrix of continuous variables.", fig.width=5, fig.height=4}
 cor_mat <- cor(A %>% select(age, bmi, tumor_size, lymph_nodes, Ki67, log_PFS))
 corrplot(cor_mat, method = "circle", type = "full", addCoef.col = "black",
          tl.col = "black", number.cex = 0.7)
-
-png(file.path(fig_dir, "fig3-corr.png"), width = 5, height = 4, units = "in", res = 300)
-corrplot(cor_mat, method = "circle", type = "full", addCoef.col = "black",
-         tl.col = "black", number.cex = 0.7)
-dev.off()
 ```
 
 ```{r eda-boxplot, fig.cap="Boxplots of log\\_PFS by categorical predictors.", fig.width=7, fig.height=5}
 cat_vars <- c("menopause", "race", "tumor_grade", "ER", "PR", "HER2",
               "stage", "surgery", "chemo", "hormonal_therapy")
 
-p <- A %>%
+A %>%
   select(all_of(cat_vars), log_PFS) %>%
   pivot_longer(-log_PFS, names_to = "variable", values_to = "level") %>%
   ggplot(aes(x = factor(level), y = log_PFS)) +
@@ -132,8 +119,6 @@ p <- A %>%
   facet_wrap(~ variable, scales = "free_x", nrow = 2) +
   labs(x = "Level", y = "Log PFS") +
   theme_bw()
-print(p)
-ggsave(file.path(fig_dir, "fig4-boxplot.png"), p, width = 7, height = 5, dpi = 300)
 ```
 
 ```{r summary-table-cont}
@@ -370,12 +355,6 @@ summary(gam_fit_full)
 par(mfrow = c(2, 3))
 plot(gam_fit_full, shade = TRUE)
 par(mfrow = c(1, 1))
-
-png(file.path(fig_dir, "fig7-gam.png"), width = 7, height = 5, units = "in", res = 300)
-par(mfrow = c(2, 3))
-plot(gam_fit_full, shade = TRUE)
-par(mfrow = c(1, 1))
-dev.off()
 ```
 
 ### Variable Importance
@@ -384,9 +363,7 @@ dev.off()
 p1 <- vip(mars_fit, num_features = 10) + theme_bw() + ggtitle("MARS")
 p2 <- vip(enet_fit, num_features = 10) + theme_bw() + ggtitle("Lasso")
 p3 <- vip(pls_fit, num_features = 10) + theme_bw() + ggtitle("PLS")
-p <- grid.arrange(p1, p2, p3, ncol = 3)
-
-ggsave(file.path(fig_dir, "fig5-vip.png"), p, width = 9, height = 3.5, dpi = 300)
+grid.arrange(p1, p2, p3, ncol = 3)
 ```
 
 ### Partial Dependence Plots
@@ -398,9 +375,7 @@ pdp_list <- lapply(top_vars, function(v) {
   pd <- partial(mars_fit, pred.var = v, grid.resolution = 50)
   autoplot(pd) + theme_bw() + ylab("log_PFS")
 })
-p <- grid.arrange(grobs = pdp_list, ncol = 3)
-
-ggsave(file.path(fig_dir, "fig6-pdp.png"), p, width = 7, height = 5, dpi = 300)
+grid.arrange(grobs = pdp_list, ncol = 3)
 ```
 
 ### Residual Diagnostics
@@ -433,9 +408,7 @@ p4 <- ggplot(data.frame(Residual = resid_test), aes(sample = Residual)) +
   stat_qq(alpha = 0.3, size = 0.8) + stat_qq_line(color = "red") +
   labs(title = "Test: Q-Q Plot") + theme_bw()
 
-p <- grid.arrange(p1, p2, p3, p4, ncol = 2)
-
-ggsave(file.path(fig_dir, "fig8-resid.png"), p, width = 7, height = 6, dpi = 300)
+grid.arrange(p1, p2, p3, p4, ncol = 2)
 ```
 
 ---
@@ -483,14 +456,12 @@ kable(gen_table, row.names = FALSE,
 ```{r gen-plot, fig.cap="Observed vs. predicted log\\_PFS on datB (MARS from cohort A).", fig.width=5, fig.height=4}
 pred_best_B <- as.vector(predict(mars_fit, newdata = x_B))
 
-p <- ggplot(data.frame(Observed = y_B, Predicted = pred_best_B),
+ggplot(data.frame(Observed = y_B, Predicted = pred_best_B),
        aes(x = Observed, y = Predicted)) +
   geom_point(alpha = 0.2, size = 0.8) +
   geom_abline(slope = 1, intercept = 0, color = "red", linewidth = 0.8) +
   labs(x = "Observed log_PFS", y = "Predicted log_PFS") +
   theme_bw()
-print(p)
-ggsave(file.path(fig_dir, "fig9-gen-plot.png"), p, width = 5, height = 4, dpi = 300)
 ```
 
 ```{r resid-B, fig.cap="Residual comparison: MARS on test set A vs. full datB.", fig.width=6, fig.height=4}
@@ -502,14 +473,12 @@ resid_df <- bind_rows(
   data.frame(Residual = resid_B, Dataset = paste0("datB (mean = ", round(mean(resid_B), 3), ")"))
 )
 
-p <- ggplot(resid_df, aes(x = Residual, fill = Dataset)) +
+ggplot(resid_df, aes(x = Residual, fill = Dataset)) +
   geom_density(alpha = 0.4) +
   geom_vline(xintercept = 0, color = "black", linetype = "dashed") +
   labs(x = "Residual", y = "Density") +
   theme_bw() +
   scale_fill_brewer(palette = "Set1")
-print(p)
-ggsave(file.path(fig_dir, "fig10-resid-B.png"), p, width = 6, height = 4, dpi = 300)
 ```
 
 ## Distribution Comparison Between Cohorts
@@ -531,7 +500,6 @@ p <- combined %>%
   theme_bw() +
   scale_fill_brewer(palette = "Set1")
 print(p)
-ggsave(file.path(fig_dir, "fig11-density.png"), p, width = 7, height = 5, dpi = 300)
 ```
 
 ```{r cat-compare, fig.cap="Categorical variable distributions across cohorts.", fig.width=7, fig.height=5}
@@ -548,7 +516,6 @@ p <- combined %>%
   theme_bw() +
   scale_fill_brewer(palette = "Set1")
 print(p)
-ggsave(file.path(fig_dir, "fig12-cat.png"), p, width = 7, height = 5, dpi = 300)
 ```
 
 ```{r cohort-summary}
@@ -684,9 +651,7 @@ r2_all_B <- c(r2_caret_B, GAM = mean(gam_r2_B))
 ```{r vip-compare, fig.cap="Variable importance comparison (MARS) between cohorts.", fig.width=7, fig.height=3.5}
 p1 <- vip(mars_fit, num_features = 10) + theme_bw() + ggtitle("MARS (best) - Cohort A")
 p2 <- vip(mars_fit_B_1se, num_features = 10) + theme_bw() + ggtitle("MARS (1se) - Cohort B")
-p <- grid.arrange(p1, p2, ncol = 2)
-
-ggsave(file.path(fig_dir, "fig13-vip-compare.png"), p, width = 7, height = 3.5, dpi = 300)
+grid.arrange(p1, p2, ncol = 2)
 ```
 
 ### Coefficient Comparison (Elastic Net)

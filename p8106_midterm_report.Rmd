@@ -182,53 +182,53 @@ kable(coef_comp, row.names=FALSE, caption="Elastic net coefficient comparison be
 ## Figures
 
 ```{r fig1, fig.cap="Distribution of log-transformed PFS (datA).", out.width="100%"}
-knitr::include_graphics("figures/fig1-response.png")
+knitr::include_graphics("figures/eda-response-1.png")
 ```
 
 ```{r fig2, fig.cap="Scatter plots of continuous predictors vs. log\\_PFS.", out.width="100%"}
-knitr::include_graphics("figures/fig2-feature.png")
+knitr::include_graphics("figures/eda-feature-1.png")
 ```
 
 ```{r fig3, fig.cap="Correlation matrix of continuous variables.", out.width="80%"}
-knitr::include_graphics("figures/fig3-corr.png")
+knitr::include_graphics("figures/eda-corr-1.png")
 ```
 
 ```{r fig4, fig.cap="Boxplots of log\\_PFS by categorical predictors.", out.width="100%"}
-knitr::include_graphics("figures/fig4-boxplot.png")
+knitr::include_graphics("figures/eda-boxplot-1.png")
 ```
 
 ```{r fig5, fig.cap="Variable importance from MARS, Lasso, and PLS (datA).", out.width="100%"}
-knitr::include_graphics("figures/fig5-vip.png")
+knitr::include_graphics("figures/vip-all-1.png")
 ```
 
 ```{r fig6, fig.cap="Partial dependence plots for top 6 predictors (MARS, datA).", out.width="100%"}
-knitr::include_graphics("figures/fig6-pdp.png")
+knitr::include_graphics("figures/pdp-mars-1.png")
 ```
 
 ```{r fig7, fig.cap="GAM smooth function estimates (datA).", out.width="100%"}
-knitr::include_graphics("figures/fig7-gam.png")
+knitr::include_graphics("figures/gam-plot-1.png")
 ```
 
 ```{r fig8, fig.cap="Residual diagnostics for MARS on training (top) and test (bottom) data.", out.width="100%"}
-knitr::include_graphics("figures/fig8-resid.png")
+knitr::include_graphics("figures/resid-diag-1.png")
 ```
 
 ```{r fig9, fig.cap="Observed vs. predicted log\\_PFS on datB (MARS from cohort A).", out.width="80%"}
-knitr::include_graphics("figures/fig9-gen-plot.png")
+knitr::include_graphics("figures/gen-plot-1.png")
 ```
 
 ```{r fig10, fig.cap="Residual comparison: MARS on test set A vs. full datB.", out.width="100%"}
-knitr::include_graphics("figures/fig10-resid-B.png")
+knitr::include_graphics("figures/resid-B-1.png")
 ```
 
 ```{r fig11, fig.cap="Distribution comparison of continuous variables between cohorts.", out.width="100%"}
-knitr::include_graphics("figures/fig11-density.png")
+knitr::include_graphics("figures/dist-compare-1.png")
 ```
 
 ```{r fig12, fig.cap="Categorical variable distributions across cohorts.", out.width="100%"}
-knitr::include_graphics("figures/fig12-cat.png")
+knitr::include_graphics("figures/cat-compare-1.png")
 ```
 
 ```{r fig13, fig.cap="Variable importance comparison (MARS) between cohorts.", out.width="100%"}
-knitr::include_graphics("figures/fig13-vip-compare.png")
+knitr::include_graphics("figures/vip-compare-1.png")
 ```
