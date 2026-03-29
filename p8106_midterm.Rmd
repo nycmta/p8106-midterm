@@ -184,13 +184,18 @@ mars_grid <- expand.grid(degree = 1:3, nprune = 2:18)
 
 ```{r enet}
 set.seed(8106)
-enet_fit     <- train(x_train_A, y_train_A, method = "glmnet",
-                      tuneGrid = enet_grid, trControl = ctrl_best)
-enet_fit_1se <- train(x_train_A, y_train_A, method = "glmnet",
-                      tuneGrid = enet_grid, trControl = ctrl_1se)
+# Step 1: best on full alpha x lambda grid
+enet_fit <- train(x_train_A, y_train_A, method = "glmnet",
+                  tuneGrid = enet_grid, trControl = ctrl_best)
 
-cat("Best:", paste(enet_fit$bestTune, collapse = ", "), "\n")
-cat("1SE: ", paste(enet_fit_1se$bestTune, collapse = ", "), "\n")
+# Step 2: fix best alpha, apply 1SE along lambda only
+enet_grid_1se <- expand.grid(alpha = enet_fit$bestTune$alpha,
+                             lambda = exp(seq(2, -6, length = 100)))
+enet_fit_1se <- train(x_train_A, y_train_A, method = "glmnet",
+                      tuneGrid = enet_grid_1se, trControl = ctrl_1se)
+
+cat("Best: alpha =", enet_fit$bestTune$alpha, ", lambda =", enet_fit$bestTune$lambda, "\n")
+cat("1SE:  alpha =", enet_fit_1se$bestTune$alpha, ", lambda =", enet_fit_1se$bestTune$lambda, "\n")
 ```
 
 ```{r enet-plot, fig.cap="Elastic net CV RMSE.", fig.width=8, fig.height=5}
@@ -262,18 +267,8 @@ gam_fit_full <- gam(gam_formula, data = train_A)
 ### Model Comparison and Test Set Evaluation
 
 ```{r model-compare-A}
-# Helper: count number of original predictors used
+# Helper: count number of original predictors used (caret models only)
 count_vars <- function(fit) {
-  if (fit$method == "gam") {
-    # GAM: count non-zero smooth + parametric terms from summary
-    s <- summary(fit$finalModel)
-    n_smooth <- sum(s$s.table[, "p-value"] < 1)  # all smooth terms count
-    n_param <- nrow(s$p.table) - 1  # exclude intercept
-    # Map dummy vars back to original predictors
-    param_names <- rownames(s$p.table)[-1]
-    n_orig_param <- length(unique(gsub("[0-9]+$", "", param_names)))
-    return(nrow(s$s.table) + n_orig_param)
-  }
   imp <- varImp(fit)$importance
   nz <- rownames(imp)[!is.na(imp[,1]) & imp[,1] > 0]
   length(unique(gsub("[0-9]+$", "", nz)))
@@ -450,26 +445,39 @@ ggsave(file.path(fig_dir, "fig8-resid.png"), p, width = 7, height = 6, dpi = 300
 ## Apply Model A to Data B
 
 ```{r gen-eval}
-pred_enet_B <- predict(enet_fit, newdata = x_B)
-pred_pls_B  <- predict(pls_fit,  newdata = x_B)
-pred_mars_B <- predict(mars_fit, newdata = x_B)
-pred_gam_B  <- predict(gam_fit_full, newdata = B)
+# Predictions on datB for all models (best + 1SE + GAM)
+gen_models <- list(
+  "ElasticNet (best)" = enet_fit,     "ElasticNet (1se)" = enet_fit_1se,
+  "PLS (best)"        = pls_fit,      "PLS (1se)"        = pls_fit_1se,
+  "MARS (best)"       = mars_fit,     "MARS (1se)"       = mars_fit_1se
+)
+
+gen_preds <- lapply(gen_models, function(m) predict(m, newdata = x_B))
+gen_rmse <- sapply(gen_preds, function(p) RMSE(p, y_B))
+
+# GAM
+gen_rmse_gam <- RMSE(predict(gam_fit_full, newdata = B), y_B)
+
+# Test RMSE on A for reference
+test_rmse_ref <- c(
+  comparison_table$Test_RMSE[comparison_table$Model == "ElasticNet (best)"],
+  comparison_table$Test_RMSE[comparison_table$Model == "ElasticNet (1se)"],
+  comparison_table$Test_RMSE[comparison_table$Model == "PLS (best)"],
+  comparison_table$Test_RMSE[comparison_table$Model == "PLS (1se)"],
+  comparison_table$Test_RMSE[comparison_table$Model == "MARS (best)"],
+  comparison_table$Test_RMSE[comparison_table$Model == "MARS (1se)"],
+  comparison_table$Test_RMSE[comparison_table$Model == "GAM"]
+)
 
 gen_table <- data.frame(
-  Model = c("ElasticNet", "PLS", "MARS", "GAM"),
-  Test_RMSE_A = round(test_rmse, 4),
-  RMSE_on_B = round(c(RMSE(pred_enet_B, y_B),
-                       RMSE(pred_pls_B, y_B),
-                       RMSE(pred_mars_B, y_B),
-                       RMSE(pred_gam_B, y_B)), 4),
-  R2_on_B = round(c(caret::R2(pred_enet_B, y_B),
-                     caret::R2(pred_pls_B, y_B),
-                     caret::R2(pred_mars_B, y_B),
-                     caret::R2(pred_gam_B, y_B)), 4)
+  Model = c(names(gen_models), "GAM"),
+  Test_RMSE_A = test_rmse_ref,
+  RMSE_on_B = round(c(gen_rmse, gen_rmse_gam), 4)
 )
-gen_table$RMSE_increase <- paste0(round(100 * (gen_table$RMSE_on_B - gen_table$Test_RMSE_A) /
-                                          gen_table$Test_RMSE_A, 1), "%")
-kable(gen_table, caption = "Generalization of Model A to datB.", row.names = FALSE)
+gen_table$Pct_Increase <- paste0(round(100 * (gen_table$RMSE_on_B - gen_table$Test_RMSE_A) /
+                                         gen_table$Test_RMSE_A, 1), "%")
+kable(gen_table, row.names = FALSE,
+      caption = "Generalization of Model A to datB.")
 ```
 
 ```{r gen-plot, fig.cap="Observed vs. predicted log\\_PFS on datB (MARS from cohort A).", fig.width=5, fig.height=4}
@@ -485,17 +493,23 @@ print(p)
 ggsave(file.path(fig_dir, "fig9-gen-plot.png"), p, width = 5, height = 4, dpi = 300)
 ```
 
-```{r resid-B, fig.cap="Residual distribution of Model A on datB.", fig.width=5, fig.height=3.5}
+```{r resid-B, fig.cap="Residual comparison: MARS on test set A vs. full datB.", fig.width=6, fig.height=4}
+resid_test_A <- y_test_A - as.vector(predict(mars_fit, newdata = x_test_A))
 resid_B <- y_B - pred_best_B
-p <- ggplot(data.frame(Residual = resid_B), aes(x = Residual)) +
-  geom_histogram(aes(y = after_stat(density)), bins = 40, fill = "steelblue", alpha = 0.7) +
-  geom_density(linewidth = 0.8) +
-  geom_vline(xintercept = mean(resid_B), color = "red", linetype = "dashed") +
-  labs(x = "Residual", y = "Density",
-       subtitle = paste("Mean residual =", round(mean(resid_B), 3))) +
-  theme_bw()
+
+resid_df <- bind_rows(
+  data.frame(Residual = resid_test_A, Dataset = paste0("Test A (mean = ", round(mean(resid_test_A), 3), ")")),
+  data.frame(Residual = resid_B, Dataset = paste0("datB (mean = ", round(mean(resid_B), 3), ")"))
+)
+
+p <- ggplot(resid_df, aes(x = Residual, fill = Dataset)) +
+  geom_density(alpha = 0.4) +
+  geom_vline(xintercept = 0, color = "black", linetype = "dashed") +
+  labs(x = "Residual", y = "Density") +
+  theme_bw() +
+  scale_fill_brewer(palette = "Set1")
 print(p)
-ggsave(file.path(fig_dir, "fig10-resid-B.png"), p, width = 5, height = 3.5, dpi = 300)
+ggsave(file.path(fig_dir, "fig10-resid-B.png"), p, width = 6, height = 4, dpi = 300)
 ```
 
 ## Distribution Comparison Between Cohorts
@@ -507,8 +521,10 @@ combined <- bind_rows(
 )
 
 p <- combined %>%
-  select(log_PFS, tumor_size, lymph_nodes, Ki67, age, bmi, Cohort) %>%
+  select(log_PFS, age, bmi, tumor_size, lymph_nodes, Ki67, Cohort) %>%
   pivot_longer(-Cohort, names_to = "Variable", values_to = "Value") %>%
+  mutate(Variable = factor(Variable, levels = c("log_PFS", "age", "bmi",
+                                                 "tumor_size", "lymph_nodes", "Ki67"))) %>%
   ggplot(aes(x = Value, fill = Cohort)) +
   geom_density(alpha = 0.4) +
   facet_wrap(~ Variable, scales = "free", nrow = 2) +
@@ -573,10 +589,15 @@ ctrl_1se_B  <- trainControl(method = "cv", number = 10, index = cv_folds_B,
 
 ```{r model-B}
 set.seed(8106)
-enet_fit_B     <- train(x_train_B, y_train_B, method = "glmnet",
-                        tuneGrid = enet_grid, trControl = ctrl_best_B)
+# Step 1: best on full alpha x lambda grid
+enet_fit_B <- train(x_train_B, y_train_B, method = "glmnet",
+                    tuneGrid = enet_grid, trControl = ctrl_best_B)
+
+# Step 2: fix best alpha, apply 1SE along lambda only
+enet_grid_1se_B <- expand.grid(alpha = enet_fit_B$bestTune$alpha,
+                               lambda = exp(seq(2, -6, length = 100)))
 enet_fit_B_1se <- train(x_train_B, y_train_B, method = "glmnet",
-                        tuneGrid = enet_grid, trControl = ctrl_1se_B)
+                        tuneGrid = enet_grid_1se_B, trControl = ctrl_1se_B)
 
 pls_fit_B     <- train(x_train_B, y_train_B, method = "pls",
                        tuneGrid = data.frame(ncomp = 1:15),
@@ -691,25 +712,6 @@ kable(coef_comp, caption = "Elastic net coefficient comparison between cohorts."
 
 ```{r mars-B-summary}
 summary(mars_fit_B_1se$finalModel)
-```
-
-### PDP Comparison
-
-```{r pdp-compare, fig.cap="PDP comparison for top predictors between cohorts.", fig.width=10, fig.height=4}
-top3 <- vip(mars_fit, num_features = 3)$data$Variable
-
-pdp_compare <- lapply(top3, function(v) {
-  pd_a <- partial(mars_fit, pred.var = v, grid.resolution = 50) %>%
-    mutate(Cohort = "A (1990-1995)")
-  pd_b <- partial(mars_fit_B_1se, pred.var = v, grid.resolution = 50) %>%
-    mutate(Cohort = "B (2000-2005)")
-  pd_both <- bind_rows(pd_a, pd_b)
-  ggplot(pd_both, aes(x = .data[[v]], y = yhat, color = Cohort)) +
-    geom_line(linewidth = 1) +
-    labs(y = "log_PFS", title = v) +
-    theme_bw() + scale_color_brewer(palette = "Set1")
-})
-grid.arrange(grobs = pdp_compare, ncol = 3)
 ```
 
 ## Summary
